@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CoachVision – PDF → Beräkning</title>
+
+  <!-- PDF.js för lokal textutläsning -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  </script>
+
+  <style>
+    :root { --brand:#0b1b3b; }
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;background:#f6f7fb;color:#0f172a}
+    .wrap{max-width:860px;margin:0 auto;padding:12px;display:grid;gap:12px}
+    .card{background:#fff;border-radius:12px;box-shadow:0 2px 10px rgba(0,0,0,.06);padding:12px}
+    h1{margin:6px 0 0 6px;font-size:20px}
+    h3{margin:.25rem 0 .5rem}
+    label{font-size:14px;font-weight:600}
+    input,textarea{width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:10px;font-size:16px;background:#fff}
+    input[type=range]{padding:0}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+    .btn{display:inline-flex;align-items:center;justify-content:center;padding:10px 14px;border-radius:10px;border:1px solid #e5e7eb;background:var(--brand);color:#fff;font-weight:600}
+    .btn.secondary{background:#fff;color:var(--brand)}
+    .pill{padding:10px;border-radius:10px;background:#f1f5f9}
+    .result{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .muted{font-size:12px;color:#64748b}
+    .chart{width:100%;height:200px;border-radius:10px;background:#fff;box-shadow:inset 0 0 0 1px #e5e7eb;display:flex;align-items:flex-end;justify-content:space-around;padding:10px}
+    .bar-wrap{display:flex;flex-direction:column;align-items:center;gap:6px}
+    .bar{width:36px;border-radius:8px 8px 4px 4px;background:#2563eb}
+    .bar.l{background:#059669}
+    .bar.s{background:#7c3aed}
+    .bar-val,.bar-label{font-size:12px}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;white-space:pre-wrap}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>CoachVision</h1>
+
+  <!-- PDF-analys -->
+  <div class="card">
+    <h3>Läs in övning från PDF</h3>
+    <input id="pdfFile" type="file" accept="application/pdf">
+    <div class="row" style="margin-top:8px">
+      <button class="btn" id="analyzePdf">Analysera PDF</button>
+      <button class="btn secondary" id="applyExtract" disabled>Tillämpa i kalkylator</button>
+    </div>
+    <div id="extractInfo" class="mono muted" style="margin-top:8px"></div>
+  </div>
+
+  <!-- Kalkyl -->
+  <div class="card">
+    <div class="row3">
+      <div>
+        <label>Verklig tid (min)</label>
+        <input id="minutes" type="number" min="0" step="1" value="8">
+      </div>
+      <div>
+        <label>Spelare totalt</label>
+        <input id="total" type="number" min="1" step="1" value="8">
+      </div>
+      <div>
+        <label>Aktiva samtidigt</label>
+        <input id="active" type="number" min="1" step="1" value="4">
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>Intensitet (1–5)</label>
+        <input id="intensity" type="range" min="1" max="5" step="1" value="3">
+      </div>
+      <div>
+        <label>Gruppens effektivitet (0–1)</label>
+        <input id="eff" type="range" min="0.5" max="1" step="0.01" value="0.85">
+        <div class="muted">Schablon (kan senare justeras med observation).</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Resultat -->
+  <div class="card">
+    <div class="result">
+      <div class="pill">Effektiv övningstid (grupp)<br><span id="outEff" style="font-size:18px;font-weight:700">0</span> min</div>
+      <div class="pill">Aktivitetstid (individ)<br><span id="outAct" style="font-size:18px;font-weight:700">0</span> min</div>
+      <div class="pill">Lärtid (individ)<br><span id="outLearn" style="font-size:18px;font-weight:700">0</span> min</div>
+      <div class="pill">Speltid (individ)<br><span id="outPlay" style="font-size:18px;font-weight:700">0</span> min</div>
+    </div>
+    <div class="muted" style="margin-top:8px">
+      Formler: Aktivitet = minuter × gEff × (aktiva/totalt). Lär = aktivitet × (intensitet/5) × (aktiva/totalt) × 0.8.
+      Spel = min(aktivitet, aktivitet × (intensitet/5) × mättnad) där mättnad = (totalt/aktiva)/((totalt/aktiva)+1) × 1.1.
+    </div>
+  </div>
+
+  <!-- Diagram -->
+  <div class="card">
+    <div class="chart">
+      <div class="bar-wrap">
+        <div class="bar a" id="barA" style="height:100%"></div>
+        <div class="bar-val" id="barAVal">100%</div>
+        <div class="bar-label">Aktivitet</div>
+      </div>
+      <div class="bar-wrap">
+        <div class="bar l" id="barL" style="height:20%"></div>
+        <div class="bar-val" id="barLVal">0%</div>
+        <div class="bar-label">Lär</div>
+      </div>
+      <div class="bar-wrap">
+        <div class="bar s" id="barS" style="height:20%"></div>
+        <div class="bar-val" id="barSVal">0%</div>
+        <div class="bar-label">Spel</div>
+      </div>
+    </div>
+    <div class="muted">Aktivitet = 100 %. Lär/Spel visas relativt aktivitet (individ).</div>
+  </div>
+</div>
+
+<script>
+// ===== PDF ANALYS =====
+const pdfFile = document.getElementById('pdfFile');
+const analyzeBtn = document.getElementById('analyzePdf');
+const applyExtractBtn = document.getElementById('applyExtract');
+const extractInfo = document.getElementById('extractInfo');
+let lastExtract = null;
+
+analyzeBtn.addEventListener('click', async ()=>{
+  if(!pdfFile.files || pdfFile.files.length===0){ alert('Välj en PDF först.'); return; }
+  const file = pdfFile.files[0];
+  try{
+    const buf = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({data: buf}).promise;
+    let textAll = '';
+    for(let p=1;p<=pdf.numPages;p++){
+      const page = await pdf.getPage(p);
+      const content = await page.getTextContent();
+      textAll += content.items.map(i=>i.str).join(' ') + '\n';
+    }
+    const extract = analyzeText(textAll);
+    lastExtract = extract;
+    extractInfo.textContent =
+`Upptäckt i PDF:
+- Aktiva (tolkat): ${extract.activeDetected ?? 'okänt'}
+- Målvakter/jokrar/neutral: +${extract.extras}
+- Intensitet (1–5, heuristik): ${extract.intensity}
+- Nyckelord: ${extract.matched.join(', ') || '–'}
+
+Råtext (första 400 tecken):
+${textAll.trim().slice(0,400)}${textAll.length>400?'…':''}`;
+    applyExtractBtn.disabled = false;
+  }catch(e){
+    console.error(e);
+    alert('Kunde inte läsa PDF: ' + e.message);
+  }
+});
+
+applyExtractBtn.addEventListener('click', ()=>{
+  if(!lastExtract) return;
+  if(lastExtract.activeDetected){ document.getElementById('active').value = String(lastExtract.activeDetected); }
+  document.getElementById('intensity').value = String(lastExtract.intensity);
+  render();
+});
+
+// Heuristik för att tolka aktiva & intensitet
+function analyzeText(text){
+  const t = text.toLowerCase();
+
+  // aktiva: "3v3", "4×4", "2-1", "2 mot 1"
+  const patterns = [ /(\d+)\s*[vx×x-]\s*(\d+)/g, /(\d+)\s*mot\s*(\d+)/g ];
+  let bestSum = 0, m;
+  patterns.forEach(re=>{
+    while((m = re.exec(t))!==null){
+      const a = parseInt(m[1],10), b = parseInt(m[2],10);
+      if(a>0 && b>0 && a+b>bestSum){ bestSum = a+b; }
+    }
+  });
+
+  // extras: jokrar/mv/neutral
+  let extras = 0;
+  const extraPats = [
+    /(\d+)\s*jokrar?/g,
+    /(\d+)\s*joker/g,
+    /(\d+)\s*m[åa]lvakter?/g,
+    /(\d+)\s*neutral(a)?/g
+  ];
+  extraPats.forEach(re=>{
+    while((m = re.exec(t))!==null){
+      const n = parseInt(m[1],10);
+      if(n>0) extras += n;
+    }
+  });
+  const activeDetected = bestSum>0 ? bestSum + extras : null;
+
+  // intensitet: nyckelord
+  const hi = ['spel','match','kontring','press','snabb','snabba byten','hög intensitet','överläge','underläge','transition','omställning','kamp'];
+  const lo = ['teknik','färdighet','lugnt tempo','kö','station','passningsövning','driva','skott','bollkontroll'];
+  let score = 0; const matched = [];
+  hi.forEach(k=>{ if(t.includes(k)){ score += 1.0; matched.push(k); } });
+  lo.forEach(k=>{ if(t.includes(k)){ score -= 0.7; matched.push(k); } });
+  if(bestSum>=6) score += 0.8; else if(bestSum>=4) score += 0.5;
+
+  let intensity = 3;
+  if(score<=-0.5) intensity = 2;
+  else if(score<0.5) intensity = 3;
+  else if(score<1.5) intensity = 4;
+  else intensity = 5;
+
+  return {activeDetected, extras, intensity, matched};
+}
+
+// ===== KALKYL =====
+const minutesEl = document.getElementById('minutes');
+const totalEl = document.getElementById('total');
+const activeEl = document.getElementById('active');
+const intensityEl = document.getElementById('intensity');
+const effEl = document.getElementById('eff');
+
+const outEff = document.getElementById('outEff');
+const outAct = document.getElementById('outAct');
+const outLearn = document.getElementById('outLearn');
+const outPlay = document.getElementById('outPlay');
+const barL = document.getElementById('barL');
+const barS = document.getElementById('barS');
+const barLVal = document.getElementById('barLVal');
+const barSVal = document.getElementById('barSVal');
+
+function calcValues(){
+  const mins = Math.max(0, Number(minutesEl.value||0));
+  const total = Math.max(1, Number(totalEl.value||1));
+  const active = Math.max(1, Math.min(Number(activeEl.value||1), total));
+  const intensity = Math.max(1, Math.min(5, Number(intensityEl.value||3)));
+  const gEff = Math.max(0.5, Math.min(1, Number(effEl.value||0.85)));
+
+  const effTime = +(mins * gEff).toFixed(2);
+  const act = +(effTime * (active/total)).toFixed(2);
+
+  // Lär: dämpning 0.8
+  const learn = +(act * (intensity/5) * (active/total) * 0.8).toFixed(2);
+
+  // Spel: mättnad × 1.1, men aldrig > aktivitet
+  const ratio = total / active;
+  let playRaw = act * (intensity/5) * (ratio / (ratio + 1)) * 1.1;
+  let play = Math.min(act, playRaw);
+  play = +play.toFixed(2);
+
+  return { effTime, act, learn, play };
+}
+
+function render(){
+  const v = calcValues();
+  outEff.textContent = v.effTime.toFixed(2);
+  outAct.textContent = v.act.toFixed(2);
+  outLearn.textContent = v.learn.toFixed(2);
+  outPlay.textContent = v.play.toFixed(2);
+
+  const ref = Math.max(0.01, v.act);
+  const pL = Math.max(0, Math.min(100, Math.round((v.learn/ref)*100)));
+  const pS = Math.max(0, Math.min(100, Math.round((v.play/ref)*100)));
+  barL.style.height = pL+'%'; barS.style.height = pS+'%';
+  barLVal.textContent = pL+'%'; barSVal.textContent = pS+'%';
+}
+
+[minutesEl,totalEl,activeEl,intensityEl,effEl].forEach(el=> el.addEventListener('input', render));
+render();
+</script>
+</body>
+</html>
